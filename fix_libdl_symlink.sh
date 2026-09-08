@@ -1,24 +1,41 @@
-#!/bin/bash
-# fix_libdl_symlink.sh
-# Fixes the "Unable to load shared library 'libdl'" error some users hit
-# when running RAPTOR Avalonia (or other apps) via dotnet on Linux.
+#!/usr/bin/env bash
 
+# Exit immediately if a command exits with a non-zero status
 set -e
 
-echo "==> Checking for libdl.so.2 and creating symlinks if needed..."
+echo "=== Raptor Avalonia Linux Fix Script ==="
 
-if [ -f /usr/lib/libdl.so.2 ] && [ ! -f /usr/lib/libdl.so ]; then
-    sudo ln -s /usr/lib/libdl.so.2 /usr/lib/libdl.so
-    echo "    Created /usr/lib/libdl.so -> /usr/lib/libdl.so.2"
-else
-    echo "    /usr/lib/libdl.so already exists or libdl.so.2 not found at that path, skipping."
+#Locate system libc.so.6 library
+LIBC_PATH=$(ldconfig -p | grep "libc.so.6" | awk '{print $NF}' | head -n 1)
+
+if [ -z "$LIBC_PATH" ]; then
+  echo "Error: Could not automatically locate libc.so.6 on your system."
+  exit 1
 fi
 
-if [ -f /usr/lib64/libdl.so.2 ] && [ ! -f /usr/lib64/libdl.so ]; then
-    sudo ln -s /usr/lib64/libdl.so.2 /usr/lib64/libdl.so
-    echo "    Created /usr/lib64/libdl.so -> /usr/lib64/libdl.so.2"
-else
-    echo "    /usr/lib64/libdl.so already exists or libdl.so.2 not found at that path, skipping."
+TARGET_DIR=$(dirname "$LIBC_PATH")
+SYMLINK_PATH="$TARGET_DIR/libdl.so"
+
+echo "[1/2] Creating libdl.so symlink pointing to $LIBC_PATH..."
+
+if [ -f "$SYMLINK_PATH" ] || [ -L "$SYMLINK_PATH" ]; then
+  echo "Notice: $SYMLINK_PATH already exists. Refreshing link..."
+  rm -f "$SYMLINK_PATH"
 fi
 
-echo "==> Done. Try running your dotnet app again."
+ln -s "$LIBC_PATH" "$SYMLINK_PATH"
+
+# Enable System.Drawing Unix support in runtimeconfig if local directory is detected
+echo "[3/3] Checking for raptor.runtimeconfig.json..."
+
+CONFIG_FILE="raptor.runtimeconfig.json"
+if [ -f "$CONFIG_FILE" ]; then
+  if ! grep -q "System.Drawing.EnableUnixSupport" "$CONFIG_FILE"; then
+    echo "Adding System.Drawing.EnableUnixSupport runtime switch..."
+    # Simple JSON injection before closing options
+    sed -i 's/"configProperties": {/"configProperties": {\n      "System.Drawing.EnableUnixSupport": true,/g' "$CONFIG_FILE"
+  fi
+fi
+
+echo "=== Fix completed successfully! ==="
+echo "You can now run your application using: dotnet raptor.dll"
